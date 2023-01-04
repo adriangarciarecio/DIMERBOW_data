@@ -1,0 +1,610 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+#1 Packages  
+
+```{r}
+# library
+library(tidyverse)
+library(dplyr)
+library(reshape2)
+library("gridExtra")
+library(gtools)
+library(xlsx)
+```
+
+#2 Get general data 
+
+```{r}
+dimers <- list.files(path = '/home/adrian/Documents/bender/PDB/dimers/', pattern = ".pdb")
+pdbid <- c()
+receptor <- c()
+numbers <- c()
+for (d in dimers) {
+  all <- strsplit(d, split = "_")
+  pdbid <- c(pdbid, all[[1]][1])
+  receptor <- c(receptor, all[[1]][2])
+  number <- all[[1]][3]
+  number <- substr(number, 1, nchar(number)-4)
+  numbers <- c(numbers, number)
+}
+#SYMMETRY 
+data_base <- read.table(file = "/home/adrian/Documents/bender/RESULTS/symmetry.txt", header = T, sep = '\t')
+#PDBID / RECEPTOR 
+data_base$PDBID <- pdbid 
+data_base$RECEPTOR <- receptor
+#TYPE
+data_base <- within(data_base, {
+  TYPE <- ifelse(SYMMETRY == 'YES', 'HH', 'HT')
+})
+#FUSION PROTEIN NAME
+fus_prot <- read.table(file = "/home/adrian/Documents/bender/RESULTS/fusion_prot.txt", header = T, sep = '\t')
+fus_prot <- fus_prot[order(fus_prot$DIMER),]
+fus_prot$FUSION <- as.character(fus_prot$FUSION)
+fusion <- c()
+for (d in data_base$DIMER){
+  d <- strsplit(d, '_')
+  d <- d[[1]]
+  d <- d[[1]]
+  fus <- fus_prot[fus_prot$DIMER == d, ]
+  print (str(fus[1,2]))
+  fusion <- c(fusion, fus[1,2])
+}
+data_base$FUSION_PROTEIN <- fusion
+#TM COORDS
+tm_coords <- read.table(file = "/home/adrian/Documents/bender/SCRIPTS/Tools/coordinates.txt", header = F, sep = '\t')
+data_base$COORDS <- tm_coords$V2
+#REFERENCES 
+ref <- read.table(file = "/home/adrian/Documents/GitLab/gpcr_dimers/Misc/references.txt", header = T, sep = '\t')
+data_base$REFERENCE <- ref$PDB_codes[match(data_base$PDBID, ref$Reference)]
+
+#NUMBER
+data_base$NUMBER <- numbers
+```
+
+#3 BIND CONTACT DATA TO BASE TABLE
+```{r}
+contacts <- list.files(path = '/home/adrian/Documents/bender/RESULTS/COUNTS_pdb', pattern = ".txt")
+matx <- matrix(0, length(dimers), 7)
+matx <- data.frame(matx)
+dimers_s <- c()
+for (d in dimers) {
+  d <- substr(d, 0, nchar(d)-4)
+  dimers_s <- c(dimers_s, d)
+}
+rownames(matx) <- dimers_s
+for (d in contacts) {
+  if (!(d == "count_inter.txt") ) {
+      all <- strsplit(d, split = "_")
+      code <- all[[1]][4]
+      fam <- all[[1]][5]
+      id <- all[[1]][6]
+      id <- substr(id,0,nchar(id)-4)
+      pdb <- paste(code,fam,id, sep="_")
+      info <- read_file(file = paste('/home/adrian/Documents/bender/RESULTS/COUNTS_pdb', d, sep="/"))
+      for (i in info) {
+        info_pdb <- strsplit(i, "\n")
+        for (inf in info_pdb[[1]]) {
+          info_pdb_s <- strsplit(inf, "\t")
+          if (length(info_pdb_s[[1]]) > 1){
+            if (as.integer(info_pdb_s[[1]][3]) > 0)  {
+              if (grepl("TM",info_pdb_s[[1]][1])){
+                if (grepl("TM",info_pdb_s[[1]][2])){
+                  if (grepl("TM1", info_pdb_s[[1]][1])){
+                    matx[pdb,1] <- 1
+                  }
+                  if (grepl("TM2", info_pdb_s[[1]][1])){
+                    matx[pdb,2] <- 1
+                  }
+                  if (grepl("TM3", info_pdb_s[[1]][1])){
+                    matx[pdb,3] <- 1
+                  }
+                  if (grepl("TM4", info_pdb_s[[1]][1])){
+                    matx[pdb,4] <- 1
+                  }
+                  if (grepl("TM5", info_pdb_s[[1]][1])){
+                    matx[pdb,5] <- 1
+                  }
+                  if (grepl("TM6", info_pdb_s[[1]][1])){
+                    matx[pdb,6] <- 1
+                  }
+                  if (grepl("TM7", info_pdb_s[[1]][1])){
+                    matx[pdb,7] <- 1
+                  }
+                  if (grepl("TM1", info_pdb_s[[1]][2])){
+                    matx[pdb,1] <- 1
+                  }
+                  if (grepl("TM2", info_pdb_s[[1]][2])){
+                    matx[pdb,2] <- 1
+                  }
+                  if (grepl("TM3", info_pdb_s[[1]][2])){
+                    matx[pdb,3] <- 1
+                  }
+                  if (grepl("TM4", info_pdb_s[[1]][2])){
+                    matx[pdb,4] <- 1
+                  }
+                  if (grepl("TM5", info_pdb_s[[1]][2])){
+                    matx[pdb,5] <- 1
+                  }
+                  if (grepl("TM6", info_pdb_s[[1]][2])){
+                    matx[pdb,6] <- 1
+                  }
+                  if (grepl("TM7", info_pdb_s[[1]][2])){
+                    matx[pdb,7] <- 1
+                  }
+                }}
+          }}
+        }
+      }
+  }
+}
+
+data_base <- cbind(data_base, matx)
+```
+
+#4 GET COUNT AND COORDS INFO OF EACH STRUCTURE 
+
+```{r}
+#INTERACTIONS
+dimers <- data_base$DIMER
+#COUNTS
+l_count_pdb <- c()
+l_count_lz <- c()
+l_count_ini_1 <- c()
+l_count_end_1 <- c()
+l_count_ini_2 <- c()
+l_count_end_2 <- c()
+l_count_ini_3 <- c()
+l_count_end_3 <- c()
+l_count_ini_4 <- c()
+l_count_end_4 <- c()
+l_count_ini_5 <- c()
+l_count_end_5 <- c()
+
+l_inter <- vector(mode = "list", length = 1)
+
+for (dimer in dimers){
+  print(dimer)
+  files_pdb <- list.files(path = '/home/adrian/Documents/bender/RESULTS/COUNTS_pdb/', pattern = dimer)
+  data_pdb <- read.table(file = paste('/home/adrian/Documents/bender/RESULTS/COUNTS_pdb/', files_pdb, sep = ""), skip = 1)
+  info_pdb <- read_file(file = paste('/home/adrian/Documents/bender/RESULTS/COUNTS_pdb/', files_pdb, sep = ""))
+  info_pdb <- strsplit(info_pdb, "\n")
+  count_pdb <- info_pdb[[1]][1]
+  l_count_pdb <- c(l_count_pdb, as.integer(count_pdb))
+  files_lz <- list.files(path = '/home/adrian/Documents/bender/RESULTS/COUNTS_pdb_lz/', pattern = dimer)
+  data_lz <- read.table(file = paste('/home/adrian/Documents/bender/RESULTS/COUNTS_pdb_lz/', files_lz, sep = ""), skip = 1)
+  info_lz <- read_file(file = paste('/home/adrian/Documents/bender/RESULTS/COUNTS_pdb_lz/', files_lz, sep = ""))
+  info_lz <- strsplit(info_lz, "\n")
+  count_lz <- info_lz[[1]][1]
+  l_count_lz <- c(l_count_lz, as.integer(count_lz))
+  files_gro_1 <- list.files(path = '/home/adrian/Documents/bender/RESULTS/COUNTS_gro_1/', pattern = dimer)
+  for (file in files_gro_1){
+    if (grepl('ini', file)){
+      data_ini <- read.table(file = paste('/home/adrian/Documents/bender/RESULTS/COUNTS_gro_1/', file, sep = ""), skip = 1)
+      info_ini <- read_file(file = paste('/home/adrian/Documents/bender/RESULTS/COUNTS_gro_1/', file, sep = ""))
+      info_ini <- strsplit(info_ini, "\n")
+      count_ini <- info_ini[[1]][1]
+      l_count_ini_1 <- c(l_count_ini_1, as.integer(count_ini))
+    }
+    if (grepl('_p_', file)){
+      data_end <- read.table(file = paste('/home/adrian/Documents/bender/RESULTS/COUNTS_gro_1/', file, sep = ""), skip = 1)
+      info_end <- read_file(file = paste('/home/adrian/Documents/bender/RESULTS/COUNTS_gro_1/', file, sep = ""))
+      info_end <- strsplit(info_end, "\n")
+      count_end <- info_end[[1]][1]
+      l_count_end_1 <- c(l_count_end_1, as.integer(count_end))
+    }
+  }
+  
+  files_gro_2 <- list.files(path = '/home/adrian/Documents/bender/RESULTS/COUNTS_gro_2/', pattern = dimer)
+  for (file in files_gro_2){
+    if (grepl('ini', file)){
+      data_ini <- read.table(file = paste('/home/adrian/Documents/bender/RESULTS/COUNTS_gro_2/', file, sep = ""), skip = 1)
+      info_ini <- read_file(file = paste('/home/adrian/Documents/bender/RESULTS/COUNTS_gro_2/', file, sep = ""))
+      info_ini <- strsplit(info_ini, "\n")
+      count_ini <- info_ini[[1]][1]
+      l_count_ini_2 <- c(l_count_ini_2, as.integer(count_ini))
+    }
+    if (grepl('_p_', file)){
+      data_end <- read.table(file = paste('/home/adrian/Documents/bender/RESULTS/COUNTS_gro_2/', file, sep = ""), skip = 1)
+      info_end <- read_file(file = paste('/home/adrian/Documents/bender/RESULTS/COUNTS_gro_2/', file, sep = ""))
+      info_end <- strsplit(info_end, "\n")
+      count_end <- info_end[[1]][1]
+      l_count_end_2 <- c(l_count_end_2, as.integer(count_end))
+    }
+  }
+  
+  files_gro_3 <- list.files(path = '/home/adrian/Documents/bender/RESULTS/COUNTS_gro_3/', pattern = dimer)
+  for (file in files_gro_3){
+    if (grepl('ini', file)){
+      data_ini <- read.table(file = paste('/home/adrian/Documents/bender/RESULTS/COUNTS_gro_3/', file, sep = ""), skip = 1)
+      info_ini <- read_file(file = paste('/home/adrian/Documents/bender/RESULTS/COUNTS_gro_3/', file, sep = ""))
+      info_ini <- strsplit(info_ini, "\n")
+      count_ini <- info_ini[[1]][1]
+      l_count_ini_3 <- c(l_count_ini_3, as.integer(count_ini))
+    }
+    if (grepl('_p_', file)){
+      data_end <- read.table(file = paste('/home/adrian/Documents/bender/RESULTS/COUNTS_gro_3/', file, sep = ""), skip = 1)
+      info_end <- read_file(file = paste('/home/adrian/Documents/bender/RESULTS/COUNTS_gro_3/', file, sep = ""))
+      info_end <- strsplit(info_end, "\n")
+      count_end <- info_end[[1]][1]
+      l_count_end_3 <- c(l_count_end_3, as.integer(count_end))
+    }
+  }
+  
+  files_gro_4 <- list.files(path = '/home/adrian/Documents/bender/RESULTS/COUNTS_gro_4/', pattern = dimer)
+  for (file in files_gro_4){
+    if (grepl('ini', file)){
+      data_ini <- read.table(file = paste('/home/adrian/Documents/bender/RESULTS/COUNTS_gro_4/', file, sep = ""), skip = 1)
+      info_ini <- read_file(file = paste('/home/adrian/Documents/bender/RESULTS/COUNTS_gro_4/', file, sep = ""))
+      info_ini <- strsplit(info_ini, '\n')
+      count_ini <- info_ini[[1]][1]
+      l_count_ini_4 <- c(l_count_ini_4, as.integer(count_ini))
+    }
+    if (grepl('_p_', file)){
+      data_end <- read.table(file = paste('/home/adrian/Documents/bender/RESULTS/COUNTS_gro_4/', file, sep = ""), skip = 1)
+      info_end <- read_file(file = paste('/home/adrian/Documents/bender/RESULTS/COUNTS_gro_4/', file, sep = ""))
+      info_end <- strsplit(info_end, '\n')
+      count_end <- info_end[[1]][1]
+      l_count_end_4 <- c(l_count_end_4, as.integer(count_end))
+    }
+  }
+  
+  files_gro_5 <- list.files(path = '/home/adrian/Documents/bender/RESULTS/COUNTS_gro_5/', pattern = dimer)
+  for (file in files_gro_5){
+    if (grepl('ini', file)){
+      data_ini <- read.table(file = paste('/home/adrian/Documents/bender/RESULTS/COUNTS_gro_5/', file, sep = ""), skip = 1)
+      info_ini <- read_file(file = paste('/home/adrian/Documents/bender/RESULTS/COUNTS_gro_5/', file, sep = ""))
+      info_ini <- strsplit(info_ini, '\n')
+      count_ini <- info_ini[[1]][1]
+      l_count_ini_5 <- c(l_count_ini_5, as.integer(count_ini))
+    }
+    if (grepl('_p_', file)){
+      data_end <- read.table(file = paste('/home/adrian/Documents/bender/RESULTS/COUNTS_gro_5/', file, sep = ""), skip = 1)
+      info_end <- read_file(file = paste('/home/adrian/Documents/bender/RESULTS/COUNTS_gro_5/', file, sep = ""))
+      info_end <- strsplit(info_end, '\n')
+      count_end <- info_end[[1]][1]
+      l_count_end_5 <- c(l_count_end_5, as.integer(count_end))
+    }
+  }
+}
+
+interactions <- data.frame(dimers, l_count_pdb, l_count_lz, l_count_ini_1, l_count_end_1, l_count_ini_2, l_count_end_2, l_count_ini_3, 
+                           l_count_end_3, l_count_ini_4, l_count_end_4, l_count_ini_5, l_count_end_5)
+
+interactions$l_count_lz <- interactions$l_count_lz - interactions$l_count_pdb
+
+```
+
+```{r}
+#COORDINATES
+coords_X <- read.table(file = "/home/adrian/Documents/GitLab/web_dimers/static/PDB/dimers/coordinates.txt", header = T)
+coords_1 <- read.table(file = "/home/adrian/Documents/GitLab/web_dimers/static/PDB/dimers_sim/sim_1/coordinates.txt", header = T)
+coords_2 <- read.table(file = "/home/adrian/Documents/GitLab/web_dimers/static/PDB/dimers_sim/sim_2/coordinates.txt", header = T)
+coords_3 <- read.table(file = "/home/adrian/Documents/GitLab/web_dimers/static/PDB/dimers_sim/sim_3/coordinates.txt", header = T)
+coords_4 <- read.table(file = "/home/adrian/Documents/GitLab/web_dimers/static/PDB/dimers_sim/sim_4/coordinates.txt", header = T)
+coords_5 <- read.table(file = "/home/adrian/Documents/GitLab/web_dimers/static/PDB/dimers_sim/sim_5/coordinates.txt", header = T)
+```
+
+#5 GENERATE EACH TABLE 
+```{r}
+#CRYSTAL STRUCTURES
+crystal_table <- coords_X
+monomers <- c()
+for (d in crystal_table$DIMER) {
+  all <- strsplit(d, split = "_")
+  chains <- all[[1]][4]
+  monomer <- substr(chains, 1, nchar(chains)-1) 
+  monomers <- c(monomers, monomer)
+}
+simulation <- rep("X", nrow(crystal_table))
+crystal_table$SIMULATION <- simulation
+crystal_table$MONOMER <- monomers
+crystal_table$DIMER <- substr(as.character(crystal_table$DIMER), 1, nchar(as.character(crystal_table$DIMER))-3)
+crystal_table$RECEPTOR <- data_base$RECEPTOR[match(crystal_table$DIMER, data_base$DIMER)]
+crystal_table$FUSION_PROTEIN <- data_base$FUSION_PROTEIN[match(crystal_table$DIMER, data_base$DIMER)]
+crystal_table$TYPE <- data_base$TYPE[match(crystal_table$DIMER, data_base$DIMER)]
+crystal_table$SYMMETRY <- data_base$SYMMETRY[match(crystal_table$DIMER, data_base$DIMER)]
+crystal_table$COUNT_1 <- interactions$l_count_pdb[match(crystal_table$DIMER, interactions$dimers)]
+crystal_table$COUNT_2 <- interactions$l_count_lz[match(crystal_table$DIMER, interactions$dimers)]
+crystal_table$COORDS <- data_base$COORDS[match(crystal_table$DIMER, data_base$DIMER)]
+crystal_table$NUMBER <- data_base$NUMBER[match(crystal_table$DIMER, data_base$DIMER)]
+crystal_table$REFERENCE <- data_base$REFERENCE[match(crystal_table$DIMER, data_base$DIMER)]
+crystal_table$H1 <- data_base$X1[match(crystal_table$DIMER, data_base$DIMER)]
+crystal_table$H2 <- data_base$X2[match(crystal_table$DIMER, data_base$DIMER)]
+crystal_table$H3 <- data_base$X3[match(crystal_table$DIMER, data_base$DIMER)]
+crystal_table$H4 <- data_base$X4[match(crystal_table$DIMER, data_base$DIMER)]
+crystal_table$H5 <- data_base$X5[match(crystal_table$DIMER, data_base$DIMER)]
+crystal_table$H6 <- data_base$X6[match(crystal_table$DIMER, data_base$DIMER)]
+crystal_table$H7 <- data_base$X7[match(crystal_table$DIMER, data_base$DIMER)]
+
+crystal_table$DIMER <- paste(as.character(crystal_table$DIMER), as.character(crystal_table$MONOMER), sep = "")
+
+ids <- c()
+for (d in crystal_table$DIMER) {
+  id <-paste(as.character(crystal_table$NUMBER[match(d, crystal_table$DIMER)]), "_X_", sep = "")
+  monomer <- substr(as.character(d), nchar(as.character(d)), nchar(as.character(d)))
+  id <- paste(id, monomer, sep = "")
+  ids <- c(ids, id)
+}
+
+crystal_table$ID <- ids
+
+crystal_table$DIMER <- substr(as.character(crystal_table$DIMER), 1, nchar(as.character(crystal_table$DIMER))-1)
+
+#SIMULATION 1 
+sim1_table <- coords_1
+monomers <- c()
+ref_dimer <- "-"
+for (d in sim1_table$DIMER) {
+  all <- strsplit(d, split = "_")
+  chains <- all[[1]][4]
+  monomer <- substr(chains, 1, nchar(chains)-1) 
+  if (ref_dimer != d){
+    monomers <- c(monomers, "A")
+  }
+  else {
+    monomers <- c(monomers, "B")
+  }
+  ref_dimer <- d
+}
+simulation <- rep("1", nrow(sim1_table))
+sim1_table$SIMULATION <- simulation
+sim1_table$MONOMER <- monomers
+sim1_table$DIMER <- substr(as.character(sim1_table$DIMER), 1, nchar(as.character(sim1_table$DIMER))-2)
+sim1_table$RECEPTOR <- data_base$RECEPTOR[match(sim1_table$DIMER, data_base$DIMER)]
+sim1_table$FUSION_PROTEIN <- data_base$FUSION_PROTEIN[match(sim1_table$DIMER, data_base$DIMER)]
+sim1_table$TYPE <- data_base$TYPE[match(sim1_table$DIMER, data_base$DIMER)]
+sim1_table$SYMMETRY <- data_base$SYMMETRY[match(sim1_table$DIMER, data_base$DIMER)]
+sim1_table$COUNT_1 <- interactions$l_count_ini_1[match(sim1_table$DIMER, interactions$dimers)]
+sim1_table$COUNT_2 <- interactions$l_count_end_1[match(sim1_table$DIMER, interactions$dimers)]
+sim1_table$COORDS <- data_base$COORDS[match(sim1_table$DIMER, data_base$DIMER)]
+sim1_table$NUMBER <- data_base$NUMBER[match(sim1_table$DIMER, data_base$DIMER)]
+sim1_table$REFERENCE <- rep("-", nrow(sim1_table))
+sim1_table$H1 <- data_base$X1[match(sim1_table$DIMER, data_base$DIMER)]
+sim1_table$H2 <- data_base$X2[match(sim1_table$DIMER, data_base$DIMER)]
+sim1_table$H3 <- data_base$X3[match(sim1_table$DIMER, data_base$DIMER)]
+sim1_table$H4 <- data_base$X4[match(sim1_table$DIMER, data_base$DIMER)]
+sim1_table$H5 <- data_base$X5[match(sim1_table$DIMER, data_base$DIMER)]
+sim1_table$H6 <- data_base$X6[match(sim1_table$DIMER, data_base$DIMER)]
+sim1_table$H7 <- data_base$X7[match(sim1_table$DIMER, data_base$DIMER)]
+
+sim1_table$DIMER <- paste(as.character(sim1_table$DIMER), as.character(sim1_table$MONOMER), sep = "")
+
+ids <- c()
+for (d in sim1_table$DIMER) {
+  id <-paste(as.character(sim1_table$NUMBER[match(d, sim1_table$DIMER)]), "_1_", sep = "")
+  monomer <- substr(as.character(d), nchar(as.character(d)), nchar(as.character(d)))
+  id <- paste(id, monomer, sep = "")
+  ids <- c(ids, id)
+}
+
+sim1_table$ID <- ids
+
+sim1_table$DIMER <- substr(as.character(sim1_table$DIMER), 1, nchar(as.character(sim1_table$DIMER))-1)
+
+
+#SIMULATION 2 
+sim2_table <- coords_2
+monomers <- c()
+ref_dimer <- "-"
+for (d in sim2_table$DIMER) {
+  all <- strsplit(d, split = "_")
+  chains <- all[[1]][4]
+  monomer <- substr(chains, 1, nchar(chains)-1) 
+  if (ref_dimer != d){
+    monomers <- c(monomers, "A")
+  }
+  else {
+    monomers <- c(monomers, "B")
+  }
+  ref_dimer <- d
+}
+simulation <- rep("2", nrow(sim2_table))
+sim2_table$SIMULATION <- simulation
+sim2_table$MONOMER <- monomers
+sim2_table$DIMER <- substr(as.character(sim2_table$DIMER), 1, nchar(as.character(sim2_table$DIMER))-2)
+sim2_table$RECEPTOR <- data_base$RECEPTOR[match(sim2_table$DIMER, data_base$DIMER)]
+sim2_table$FUSION_PROTEIN <- data_base$FUSION_PROTEIN[match(sim2_table$DIMER, data_base$DIMER)]
+sim2_table$TYPE <- data_base$TYPE[match(sim2_table$DIMER, data_base$DIMER)]
+sim2_table$SYMMETRY <- data_base$SYMMETRY[match(sim2_table$DIMER, data_base$DIMER)]
+sim2_table$COUNT_1 <- interactions$l_count_ini_2[match(sim2_table$DIMER, interactions$dimers)]
+sim2_table$COUNT_2 <- interactions$l_count_end_2[match(sim2_table$DIMER, interactions$dimers)]
+sim2_table$COORDS <- data_base$COORDS[match(sim2_table$DIMER, data_base$DIMER)]
+sim2_table$NUMBER <- data_base$NUMBER[match(sim2_table$DIMER, data_base$DIMER)]
+sim2_table$REFERENCE <- rep("-", nrow(sim2_table))
+sim2_table$H1 <- data_base$X1[match(sim2_table$DIMER, data_base$DIMER)]
+sim2_table$H2 <- data_base$X2[match(sim2_table$DIMER, data_base$DIMER)]
+sim2_table$H3 <- data_base$X3[match(sim2_table$DIMER, data_base$DIMER)]
+sim2_table$H4 <- data_base$X4[match(sim2_table$DIMER, data_base$DIMER)]
+sim2_table$H5 <- data_base$X5[match(sim2_table$DIMER, data_base$DIMER)]
+sim2_table$H6 <- data_base$X6[match(sim2_table$DIMER, data_base$DIMER)]
+sim2_table$H7 <- data_base$X7[match(sim2_table$DIMER, data_base$DIMER)]
+
+sim2_table$DIMER <- paste(as.character(sim2_table$DIMER), as.character(sim2_table$MONOMER), sep = "")
+
+ids <- c()
+for (d in sim2_table$DIMER) {
+  id <-paste(as.character(sim2_table$NUMBER[match(d, sim2_table$DIMER)]), "_2_", sep = "")
+  monomer <- substr(as.character(d), nchar(as.character(d)), nchar(as.character(d)))
+  id <- paste(id, monomer, sep = "")
+  ids <- c(ids, id)
+}
+
+sim2_table$ID <- ids
+
+sim2_table$DIMER <- substr(as.character(sim2_table$DIMER), 1, nchar(as.character(sim2_table$DIMER))-1)
+
+#SIMULATION 3 
+sim3_table <- coords_3
+monomers <- c()
+ref_dimer <- "-"
+for (d in sim3_table$DIMER) {
+  all <- strsplit(d, split = "_")
+  chains <- all[[1]][4]
+  monomer <- substr(chains, 1, nchar(chains)-1) 
+  if (ref_dimer != d){
+    monomers <- c(monomers, "A")
+  }
+  else {
+    monomers <- c(monomers, "B")
+  }
+  ref_dimer <- d
+}
+sim3_table$SIMULATION <-  rep("3", nrow(sim3_table))
+sim3_table$MONOMER <- monomers
+sim3_table$DIMER <- substr(as.character(sim3_table$DIMER), 1, nchar(as.character(sim3_table$DIMER))-2)
+sim3_table$RECEPTOR <- data_base$RECEPTOR[match(sim3_table$DIMER, data_base$DIMER)]
+sim3_table$FUSION_PROTEIN <- data_base$FUSION_PROTEIN[match(sim3_table$DIMER, data_base$DIMER)]
+sim3_table$TYPE <- data_base$TYPE[match(sim3_table$DIMER, data_base$DIMER)]
+sim3_table$SYMMETRY <- data_base$SYMMETRY[match(sim3_table$DIMER, data_base$DIMER)]
+sim3_table$COUNT_1 <- interactions$l_count_ini_3[match(sim3_table$DIMER, interactions$dimers)]
+sim3_table$COUNT_2 <- interactions$l_count_end_3[match(sim3_table$DIMER, interactions$dimers)]
+sim3_table$COORDS <- data_base$COORDS[match(sim3_table$DIMER, data_base$DIMER)]
+sim3_table$NUMBER <- data_base$NUMBER[match(sim3_table$DIMER, data_base$DIMER)]
+sim3_table$REFERENCE <- rep("-", nrow(sim3_table))
+sim3_table$H1 <- data_base$X1[match(sim3_table$DIMER, data_base$DIMER)]
+sim3_table$H2 <- data_base$X2[match(sim3_table$DIMER, data_base$DIMER)]
+sim3_table$H3 <- data_base$X3[match(sim3_table$DIMER, data_base$DIMER)]
+sim3_table$H4 <- data_base$X4[match(sim3_table$DIMER, data_base$DIMER)]
+sim3_table$H5 <- data_base$X5[match(sim3_table$DIMER, data_base$DIMER)]
+sim3_table$H6 <- data_base$X6[match(sim3_table$DIMER, data_base$DIMER)]
+sim3_table$H7 <- data_base$X7[match(sim3_table$DIMER, data_base$DIMER)]
+
+sim3_table$DIMER <- paste(as.character(sim3_table$DIMER), as.character(sim3_table$MONOMER), sep = "")
+
+ids <- c()
+for (d in sim3_table$DIMER) {
+  id <-paste(as.character(sim3_table$NUMBER[match(d, sim3_table$DIMER)]), "_3_", sep = "")
+  monomer <- substr(as.character(d), nchar(as.character(d)), nchar(as.character(d)))
+  id <- paste(id, monomer, sep = "")
+  ids <- c(ids, id)
+}
+
+sim3_table$ID <- ids
+
+sim3_table$DIMER <- substr(as.character(sim3_table$DIMER), 1, nchar(as.character(sim3_table$DIMER))-1)
+
+#SIMULATION 4 
+sim4_table <- coords_4
+monomers <- c()
+ref_dimer <- "-"
+for (d in sim4_table$DIMER) {
+  all <- strsplit(d, split = "_")
+  chains <- all[[1]][4]
+  monomer <- substr(chains, 1, nchar(chains)-1) 
+  if (ref_dimer != d){
+    monomers <- c(monomers, "A")
+  }
+  else {
+    monomers <- c(monomers, "B")
+  }
+  ref_dimer <- d
+}
+sim4_table$SIMULATION <- rep("4", nrow(sim4_table))
+sim4_table$MONOMER <- monomers
+sim4_table$DIMER <- substr(as.character(sim4_table$DIMER), 1, nchar(as.character(sim4_table$DIMER))-2)
+sim4_table$RECEPTOR <- data_base$RECEPTOR[match(sim4_table$DIMER, data_base$DIMER)]
+sim4_table$FUSION_PROTEIN <- data_base$FUSION_PROTEIN[match(sim4_table$DIMER, data_base$DIMER)]
+sim4_table$TYPE <- data_base$TYPE[match(sim4_table$DIMER, data_base$DIMER)]
+sim4_table$SYMMETRY <- data_base$SYMMETRY[match(sim4_table$DIMER, data_base$DIMER)]
+sim4_table$COUNT_1 <- interactions$l_count_ini_4[match(sim4_table$DIMER, interactions$dimers)]
+sim4_table$COUNT_2 <- interactions$l_count_end_4[match(sim4_table$DIMER, interactions$dimers)]
+sim4_table$COORDS <- data_base$COORDS[match(sim4_table$DIMER, data_base$DIMER)]
+sim4_table$NUMBER <- data_base$NUMBER[match(sim4_table$DIMER, data_base$DIMER)]
+sim4_table$REFERENCE <- rep("-", nrow(sim4_table))
+sim4_table$H1 <- data_base$X1[match(sim4_table$DIMER, data_base$DIMER)]
+sim4_table$H2 <- data_base$X2[match(sim4_table$DIMER, data_base$DIMER)]
+sim4_table$H3 <- data_base$X3[match(sim4_table$DIMER, data_base$DIMER)]
+sim4_table$H4 <- data_base$X4[match(sim4_table$DIMER, data_base$DIMER)]
+sim4_table$H5 <- data_base$X5[match(sim4_table$DIMER, data_base$DIMER)]
+sim4_table$H6 <- data_base$X6[match(sim4_table$DIMER, data_base$DIMER)]
+sim4_table$H7 <- data_base$X7[match(sim4_table$DIMER, data_base$DIMER)]
+
+sim4_table$DIMER <- paste(as.character(sim4_table$DIMER), as.character(sim4_table$MONOMER), sep = "")
+
+ids <- c()
+for (d in sim4_table$DIMER) {
+  id <-paste(as.character(sim4_table$NUMBER[match(d, sim4_table$DIMER)]), "_4_", sep = "")
+  monomer <- substr(as.character(d), nchar(as.character(d)), nchar(as.character(d)))
+  id <- paste(id, monomer, sep = "")
+  ids <- c(ids, id)
+}
+
+sim4_table$ID <- ids
+
+sim4_table$DIMER <- substr(as.character(sim4_table$DIMER), 1, nchar(as.character(sim4_table$DIMER))-1)
+
+#SIMULATION 5 
+sim5_table <- coords_5
+monomers <- c()
+ref_dimer <- "-"
+for (d in sim5_table$DIMER) {
+  all <- strsplit(d, split = "_")
+  chains <- all[[1]][4]
+  monomer <- substr(chains, 1, nchar(chains)-1) 
+  if (ref_dimer != d){
+    monomers <- c(monomers, "A")
+  }
+  else {
+    monomers <- c(monomers, "B")
+  }
+  ref_dimer <- d
+}
+sim5_table$SIMULATION <- rep("5", nrow(sim5_table))
+sim5_table$MONOMER <- monomers
+sim5_table$DIMER <- substr(as.character(sim5_table$DIMER), 1, nchar(as.character(sim5_table$DIMER))-2)
+sim5_table$RECEPTOR <- data_base$RECEPTOR[match(sim5_table$DIMER, data_base$DIMER)]
+sim5_table$FUSION_PROTEIN <- data_base$FUSION_PROTEIN[match(sim5_table$DIMER, data_base$DIMER)]
+sim5_table$TYPE <- data_base$TYPE[match(sim5_table$DIMER, data_base$DIMER)]
+sim5_table$SYMMETRY <- data_base$SYMMETRY[match(sim5_table$DIMER, data_base$DIMER)]
+sim5_table$COUNT_1 <- interactions$l_count_ini_5[match(sim5_table$DIMER, interactions$dimers)]
+sim5_table$COUNT_2 <- interactions$l_count_end_5[match(sim5_table$DIMER, interactions$dimers)]
+sim5_table$COORDS <- data_base$COORDS[match(sim5_table$DIMER, data_base$DIMER)]
+sim5_table$NUMBER <- data_base$NUMBER[match(sim5_table$DIMER, data_base$DIMER)]
+sim5_table$REFERENCE <- rep("-", nrow(sim5_table))
+sim5_table$H1 <- data_base$X1[match(sim5_table$DIMER, data_base$DIMER)]
+sim5_table$H2 <- data_base$X2[match(sim5_table$DIMER, data_base$DIMER)]
+sim5_table$H3 <- data_base$X3[match(sim5_table$DIMER, data_base$DIMER)]
+sim5_table$H4 <- data_base$X4[match(sim5_table$DIMER, data_base$DIMER)]
+sim5_table$H5 <- data_base$X5[match(sim5_table$DIMER, data_base$DIMER)]
+sim5_table$H6 <- data_base$X6[match(sim5_table$DIMER, data_base$DIMER)]
+sim5_table$H7 <- data_base$X7[match(sim5_table$DIMER, data_base$DIMER)]
+
+sim5_table$DIMER <- paste(as.character(sim5_table$DIMER), as.character(sim5_table$MONOMER), sep = "")
+
+ids <- c()
+for (d in sim5_table$DIMER) {
+  id <-paste(as.character(sim5_table$NUMBER[match(d, sim5_table$DIMER)]), "_5_", sep = "")
+  monomer <- substr(as.character(d), nchar(as.character(d)), nchar(as.character(d)))
+  id <- paste(id, monomer, sep = "")
+  ids <- c(ids, id)
+}
+
+sim5_table$ID <- ids
+
+sim5_table$DIMER <- substr(as.character(sim5_table$DIMER), 1, nchar(as.character(sim5_table$DIMER))-1)
+```
+
+
+
+#6 GENERATE THE BIG DATA TABLE
+
+```{r}
+all_data <- rbind(crystal_table, sim1_table, sim2_table, sim3_table, sim4_table, sim5_table)
+pdbs_no_display <- c("4MBS_CCR5_20", "5IU4_AA2AR_42", "5IU4_AA2AR_43")
+all_data <- within(all_data, {
+  DISPLAY <- ifelse(DIMER %in% pdbs_no_display, 'NO', 'YES')
+})
+all_data_ord <- data.frame("ID"=all_data$ID, "SIMULATION"=all_data$SIMULATION, "MONOMER"=all_data$MONOMER, "DIMER"=all_data$DIMER, "RECEPTOR"=all_data$RECEPTOR, "X"=all_data$X, "Y"=all_data$Y, "Z"=all_data$Z, "FUSION_PROTEIN"=all_data$FUSION_PROTEIN, "TYPE"=all_data$TYPE, "SYMMETRY"=all_data$SYMMETRY, "COUNT_1"=all_data$COUNT_1, "COUNT_2"=all_data$COUNT_2, "COORDS"=all_data$COORDS, "H1"=all_data$H1, "H2"=all_data$H2, "H3"=all_data$H3, "H4"=all_data$H4, "H5"=all_data$H5, "H6"=all_data$H6, "H7"=all_data$H7,  "NUMBER"=all_data$NUMBER, "REFERENCE"=all_data$REFERENCE, "DISPLAY"=all_data$DISPLAY)
+write.csv(all_data_ord, file = "/home/adrian/Documents/GitLab/web_dimers/dimer_general_info_r.csv", quote = F, row.names = F)
+all_data_ord
+```
+
+#7 COMPARE TABLES
+```{r}
+old_data <- read.csv("/home/adrian/Documents/GitLab/web_dimers/dimer_general_info.csv", sep = ",")
+class(old_data$DIMER)
+class(all_data_ord$DIMER[1])
+```
