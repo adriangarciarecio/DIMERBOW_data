@@ -22,7 +22,6 @@ def get_all_gpcrdb_structures():
         table_data = row.find_all('td')
         if table_data:
             results.append([data.get_text().strip() for data in table_data])
-
     # some fields with multiple entries (ligands ...) contain '\n'
 
     for i, pdb in enumerate(results):
@@ -30,13 +29,17 @@ def get_all_gpcrdb_structures():
             if '\n' in column:
                 #print(column)
                 results[i][j] = results[i][j].replace('\n', ',').replace(' ', '').replace(',,', ', ')
-
-    field_names = results.pop(0)  # first row has titles
+    # field_names = results.pop(0)  # first row has titles
+    field_names = results[1]
     field_names.pop(0)
+    field_names.pop(-1)
+    print(field_names)
     results.pop(0)
+    results.pop(1)
 
     for i in range(len(results)):
         results[i].pop(0)  # remove empty column (selection)
+        results[i].pop(-1) # remove the 
 
     fields = np.array(field_names)
     # fields[i,:] --> item i
@@ -55,8 +58,8 @@ from mysql.connector import connect
 import sys
 # Connect
 try:
-    cnx = connect(host='alf03.uab.cat', user='lmcdb', password=os.getenv('LMCDB_PASS'),
-        database='lmcdb')
+    cnx = connect(host='localhost', user='root', password='Cair0!',
+        database='dimerbow')
 except:
     print('could not connect')
     sys.exit(0)

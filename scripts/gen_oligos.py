@@ -1,5 +1,6 @@
 #!/usr/bin/env python2
 
+# MAIN IMPORTS
 from __future__ import print_function
 import pymol
 from pymol import cmd
@@ -9,17 +10,18 @@ import requests
 import os
 import pandas as pd
 import mysql.connector
-import sqlalchemy
+from sqlalchemy import create_engine
 from termcolor import colored
+import time 
+
+# VARIABLES
+from Tools.SECRETS import *
+
 
 ##############################################################################
 # Generates possible GPCR oligomers based on possible symmetry mates
 
-# Known problems: considers center-to-center distance only
-#     it would be nice to consider also miniumum distance between two objects.
-#     see 4BWB_A_NTR1_RAT.pse
 ##############################################################################
-
 
 def get_pdb_opm(pdb, path_opm):
     """Downloads a PDB from OPM"""
@@ -37,7 +39,7 @@ def cut_pdb_opm(opm_pdb, cut_pdb, sel_chain="A"):
     """Reads a PDB from the OPM an writes a PDB with the TM region"""
     with open(opm_pdb) as input_opm:
         data = input_opm.read()
-    if data.startswith("<html>"):
+    if "No such object" in data:
         print("Not in OPM!!!")
         return "no TM"
     ndx_top = data.find("O   DUM")
@@ -99,9 +101,10 @@ def cut_pdb_opm(opm_pdb, cut_pdb, sel_chain="A"):
 def generate_oligomers(pdb, sel_chain, path_cut, uni=""):
     """Generates symmetry mates for a PDB and a selected chain.
     When there are valid oligomers save a PSE session"""
-    path_pse = "/home/adrian/Documents/GitLab/gpcr_dimers/PSE/"
+    path_pse = "./data/PSE/"
     # load pdb
     cmd.fetch(pdb)
+    time.sleep(1)
     chains = []
     for ch in cmd.get_chains(pdb):
         # print(pdb, " has chain ", ch)
@@ -112,6 +115,7 @@ def generate_oligomers(pdb, sel_chain, path_cut, uni=""):
     cmd.delete(pdb)
     try:
         cmd.load(path_cut + "{0}_cut.pdb".format(pdb))
+        time.sleep(1)
     except:
         print("Could not load associated PDB with TM domain only")
         pymol.cmd.quit()
@@ -129,13 +133,20 @@ def generate_oligomers(pdb, sel_chain, path_cut, uni=""):
 
     for ch in chains:
         cmd.super("{0}_cut".format(pdb), pdb + sel_chain)
+        time.sleep(1)
         cmd.symexp(
             "sym" + ch, pdb + ch, "({0})".format(pdb + ch), "50"
         )  # cmd.symexp('sym', '4dkl', '(4dkl)', 10)
-
+        time.sleep(1)
     cmd.copy("mv_cut", "{0}_cut".format(pdb))
-
-    o_ref = np.array(cmd.get_atom_coords("resn DUM and name O and {0}_cut".format(pdb)))
+    
+    try:
+        o_ref = np.array(cmd.get_atom_coords("resn DUM and name O and {0}_cut".format(pdb)))
+    except:
+        print("{0}_cut".format(pdb) + " object corrupted!")
+        cmd.copy("{0}_cut".format(pdb), "{0}_cut".format(pdb))
+        time.sleep(1)
+        o_ref = np.array(cmd.get_atom_coords("resn DUM and name O and {0}_cut".format(pdb)))
     n_ref = np.array(cmd.get_atom_coords("resn DUM and name N and {0}_cut".format(pdb)))
     sym_objects = cmd.get_object_list("(sym*)")
     for ch in chains:  # chains[1:]:
@@ -146,8 +157,20 @@ def generate_oligomers(pdb, sel_chain, path_cut, uni=""):
     v_ref = (o_ref - n_ref) / np.linalg.norm(o_ref - n_ref)
 
     for sym_object in sym_objects:
-        cmd.super("mv_cut", sym_object)
-        o_mv = np.array(cmd.get_atom_coords("resn DUM and name O and mv_cut"))
+        try:
+            cmd.super("mv_cut", sym_object)
+            time.sleep(1)
+        except: # empty selections
+            print("removing " + sym_object)
+            cmd.delete(sym_object)
+            continue
+        try: # mv_cut corrupted
+            o_mv = np.array(cmd.get_atom_coords("resn DUM and name O and mv_cut"))
+        except:
+            print("mv_cut object corrupted!")
+            cmd.copy("mv_cut", "mv_cut")
+            time.sleep(1)
+            o_mv = np.array(cmd.get_atom_coords("resn DUM and name O and mv_cut"))
         n_mv = np.array(cmd.get_atom_coords("resn DUM and name N and mv_cut"))
         oo = np.linalg.norm(o_mv - o_ref)
         nn = np.linalg.norm(n_mv - n_ref)
@@ -160,52 +183,55 @@ def generate_oligomers(pdb, sel_chain, path_cut, uni=""):
         # print(oo, nn, no, on)
         # different layer
         if abs(no - on) > 10:
-            # print(sym_object, 'in another layer')
+            print(sym_object, 'in another layer')
             cmd.delete(sym_object)
         # same layer but far (48 A maximum)
         elif nn > max_dist and oo > max_dist:
-            # print(sym_object, 'in the same layer but too far')
+            print(sym_object, 'in the same layer but too far')
             print(sym_object, nn, oo)
             cmd.delete(sym_object)
         # not parallel
         elif angle > np.deg2rad(max_angle):  # angle smaller than 30 degrees only
-            # print(sym_object, 'not parallel to reference', angle)
+            print(sym_object, 'not parallel to reference', angle)
             cmd.delete(sym_object)
         else:
             print(sym_object, "OK", "angle: ", angle, "dists: ", nn, oo)
             pass
     cmd.delete("{0}_cut".format(pdb))
     cmd.delete("mv_cut")
-    cmd.color("cyan", pdb + sel_chain)
-    cmd.show("sticks", "hetatm")
-    cmd.show("spheres", "hetatm")
-    cmd.set("sphere_scale", "0.2")
-    # Save PyMOL session only if there are valid interfaces
-    final_objects = cmd.get_object_list("*")
-    # print(len(final_objects))
-    if len(final_objects) > 1:
-        ses_name = pdb + "_" + sel_chain + "_" + uni + ".pse"
-        print("Saving a session:", ses_name, "\n")
-        cmd.save(path_pse + ses_name, "*")
-    else:
+    try:
+        cmd.color("cyan", pdb + sel_chain)
+        cmd.show("sticks", "hetatm")
+        cmd.show("spheres", "hetatm")
+        cmd.set("sphere_scale", "0.2")
+        # Save PyMOL session only if there are valid interfaces
+        final_objects = cmd.get_object_list("*")
+        # print(len(final_objects))
+        if len(final_objects) > 1:
+            ses_name = pdb + "_" + sel_chain + "_" + uni + ".pse"
+            print("Saving a session:", ses_name, "\n")
+            cmd.save(path_pse + ses_name, "*")
+        else:
+            print("No oligos here\n")
+    except: # ref chain structures removed only symm structures
         print("No oligos here\n")
+        pass
     cmd.delete("*")
-
 
 def all_in_one(pdb, sel_chain, uni=""):
     """1) Requests the PDB to OPM with get_pdb_opm
        2) Cuts the TM parts with cut_pdb_opm
        3) Generates all dimers and creates .pse sessions with generate_oligomers
        4) Removes PDBs (intermediate)"""
-    path_pse = "/home/adrian/Documents/GitLab/gpcr_dimers/PSE/"
-    path_opm = "/home/adrian/Documents/GitLab/gpcr_dimers/OPM/"
-    path_cut = "/home/adrian/Documents/GitLab/gpcr_dimers/OPM/cut_opm/"
+    path_pse = "./data/PSE/"
+    path_opm = "./data/OPM/"
+    path_cut = "./data/OPM/cut_opm/"
     ses_name = pdb + "_" + sel_chain + "_" + uni + ".pse"
     if not os.path.exists(f"{path_pse}{ses_name}"):
         pdb_lower = pdb.lower()
-        if not os.path.exists(f"{path_opm}{pdb_lower}.pdb"):
+        if not os.path.exists(f"{path_opm}{pdb}_opm.pdb"):
             get_pdb_opm(pdb, path_opm)  # output is xxx_opm.pdb
-        if not os.path.exists(f"{path_cut}{pdb_lower}.pdb"):
+        if not os.path.exists(f"{path_cut}{pdb}_cut.pdb"):
             message = cut_pdb_opm(
                 path_opm + pdb + "_opm.pdb", path_cut + pdb + "_cut.pdb", sel_chain
             )
@@ -233,13 +259,8 @@ def pdb_lmcdb(last_pdb):
     """Returns the list of PDB codes from lmcdb"""
 
     try:
-        engine = sqlalchemy.create_engine(
-            f"mysql://lmcdbuser:{os.getenv('LMCDBUSER_PASS')}@alf03.uab.cat/lmcdb"
-        )
-        #
-        # engine = sqlalchemy.create_engine(
-        #     f"mysql+mysqlconnector://adrian:D1m3rB0w!@alf06.uab.es:3306/lmcdb"
-        # )
+        engine = create_engine(f'postgresql+psycopg2://{DB_USER}:{DB_PASSWORD}@localhost/{DB_NAME}')
+
         print(engine)
     except:
         print("could not connect")
@@ -250,19 +271,16 @@ def pdb_lmcdb(last_pdb):
     # sql_query = """SELECT pdbid, chain, uniprot FROM pdb
     # WHERE resolution < 90 and domain like '7tm%' or 'Frizzled' and pdbid >= '5UNH' and
     # expmet='X-RAY DIFFRACTION';"""
-    if last_pdb != "":
-        sql_query = f"SELECT pdbid, chain, uniprot FROM pdb WHERE resolution < 90 and (domain REGEXP '7tm.' or domain='Frizzled') and pdbid >= '{last_pdb}' and expmet='X-RAY DIFFRACTION';"
+    if last_pdb != "NO":
+        sql_query = f"SELECT pdb, chain, uniprot_entry FROM gpcr_pdb WHERE resolution < 90 and method='X-ray' and type ='receptor' and pdb >= '{last_pdb}';"
     else:
-        sql_query = f"SELECT pdbid, chain, uniprot FROM pdb WHERE resolution < 90 and (domain REGEXP '7tm.' or domain='Frizzled') and expmet='X-RAY DIFFRACTION';"
+        sql_query = f"SELECT pdb, Chain, uniprot_entry FROM gpcr_pdb WHERE resolution < 90 and method='X-ray' and type ='receptor';"
 
     data = pd.read_sql(sql_query, engine)
-    pdb_codes = list(data.pdbid)
+    pdb_codes = list(data.pdb)
     pdb_chains = list(data.chain)
-    pdb_uni = list(data.uniprot)
-    ##########################################################################
-    # sql_query = '''SELECT pdbid, chain, uniprot FROM pdb
-    # WHERE resolution < 90 and domain like '7tm%';'''
-    ##########################################################################
+    pdb_uni = list(data.uniprot_entry)
+
     return pdb_codes, pdb_chains, pdb_uni
 
 
@@ -280,12 +298,12 @@ pymol.finish_launching(["pymol", "-q"])
 for i, u_pdb in enumerate(pdbs):
     pdb = str(u_pdb)
     chns = str(chains[i]).split(", ")
-    uni = str(unis[i])
+    uni = str(unis[i]).lower()
     for sel_chain in chns:
         print("###", pdb, sel_chain, "###")
-        try:
-            all_in_one(pdb, sel_chain, uni)
-        except:
-            print(colored("### ERROR " + pdb + sel_chain + "###", "red"))
-            continue
+        # try:
+        all_in_one(pdb, sel_chain, uni)
+        # except:
+        #     print(colored("### ERROR " + pdb + sel_chain + "###", "red"))
+        #     continue
 pymol.cmd.quit()

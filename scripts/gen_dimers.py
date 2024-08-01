@@ -4,7 +4,7 @@
 ###############################################################################
 import os
 import sys
-from gen_distribution import *
+from gen_distribution import create_dir, open_file, get_files, start_pymol, load_pymol, quit_pymol
 from pymol import cmd
 import numpy as np
 import MDAnalysis as mda
@@ -18,44 +18,56 @@ from urllib.request import urlretrieve
 from bs4 import BeautifulSoup
 import re
 import pandas as pd
-import sqlalchemy
+from sqlalchemy import create_engine
 from time import sleep
 from termcolor import colored
+from Tools.SECRETS import *
 
 ###############################################################################
 # PATHS AND DICTIONARIES
 ###############################################################################
 path = os.path.dirname(os.path.abspath("__file__"))
 sys.path.insert(0, path)
-path_pse = path + "/PSE/"
-path_opm = path + "/OPM/"
-path_pdb = path + "/PDB/"
-path_misc = path + "/Misc/"
-path_dimer_lz = path + "/PDB/dimers_origin/"
-path_dimer = path + "/PDB/dimers_nlz/"
-path_dimer_end = path + "/PDB/dimers/"
-path_removed = path + "/PDB/dimers_removed/"
+path_pse = path + "/../data/PSE/"
+path_opm = path + "/../data/OPM/"
+path_pdb = path + "/../data/PDB/"
+path_misc = path + "/../Misc/"
+path_dimer_lz = path + "/../data/PDB/dimers_origin/"
+path_dimer = path + "/../data/PDB/dimers_nlz/"
+path_dimer_end = path + "/../data/PDB/dimers/"
+path_removed = path + "/../data/PDB/dimers_removed/"
 d_change = {"A": "Q", "B": "R", "C": "S", "D": "T", "E": "U", "F": "V"}
 
 ###############################################################################
 # FUNCTIONS
 ###############################################################################
-def get_coord_lz(path_file):
-    coord = open_file(path_file, "fusion_residues.txt")
+def get_coord_lz():
     d_coord = {"default": "-1000-0+900-2000"}  # default is to remove -1000-0+900-2000
-    del coord[0]
-    for c in coord:
-        line = c.split(" ")
-        d_coord[line[0]] = line[1][:-1]
-    return d_coord
+    try:
+        engine = create_engine(f'postgresql+psycopg2://{DB_USER}:{DB_PASSWORD}@localhost/{DB_NAME}')
 
+        print(engine)
+    except:
+        print("could not connect")
+        sys.exit(0)
+
+    # Get all data    
+    sql_query = f"SELECT pdb, segments FROM gpcrdb_info WHERE resolution < 90 and type='X-ray';"
+    
+    data = pd.read_sql(sql_query, engine)
+    
+    # Create the dict of segments
+    for index, row in data.iterrows():
+        d_coord[row["pdb"]] = row["segments"]
+    
+    return d_coord
 
 def rem_lz(lz, lz_info, path_dimer_lz, path_dimer, cutoff_lz):
     codes = lz_info.keys()
     cmd.load(path_dimer_lz + lz + ".pdb", quiet=0)
     name = lz.split("_")
     if name[0] in codes:
-        cmd.do(f"select resi {lz_info[name[0]]} and not het")
+        cmd.do(f"select not resi {lz_info[name[0]]} and not het")
         cmd.do("remove sele")
     # Normal case
     else:
@@ -65,27 +77,38 @@ def rem_lz(lz, lz_info, path_dimer_lz, path_dimer, cutoff_lz):
         cmd.do("remove sele")
     sleep(1)
     cmd.do(
-        "select  not byres (all and not het) around " + cutoff_lz + " + all and not het"
+        "select not byres (all and not het) around " + cutoff_lz + " + all and not het"
     )
     cmd.do("remove sele")
     cmd.save(path_dimer + lz + ".pdb")
     sleep(1)
 
-
 def rem_chains(path):
     dic = {}
-    lines = open_file(path, "pdb_mappings.txt")
-    for line in lines:
-        line = line[:-1]
-        line = line.split("  ")
-        for i in line:
-            if i != line[0]:
-                if line[0] in dic:
-                    dic[line[0]] = f"{dic[line[0]]}+{i[0]}"
-                else:
-                    dic[line[0]] = i[0]
-    return dic
+    try:
+        engine = create_engine(f'postgresql+psycopg2://{DB_USER}:{DB_PASSWORD}@localhost/{DB_NAME}')
 
+        print(engine)
+    except:
+        print("could not connect")
+        sys.exit(0)
+
+    # Get all data    
+    sql_query = f"SELECT * FROM gpcrdb_info WHERE resolution < 90 and type='X-ray diffraction';"
+
+    data = pd.read_sql(sql_query, engine)
+    
+    # Get chains from database   
+    for index, row in data.iterrows():
+        chains = row["preferred_chain"]  
+        if str(row["signalling_protein.data.entity1.chain"]) != "None":
+            chains = chains + "+" + str(row["signalling_protein.data.entity1.chain"])
+        if str(row["signalling_protein.data.entity2.chain"]) != "None":
+            chains = chains + "+" + str(row["signalling_protein.data.entity2.chain"])
+        if str(row["signalling_protein.data.entity3.chain"]) != "None":
+            chains = chains + "+" + str(row["signalling_protein.data.entity3.chain"])
+        dic[row["pdb_code"]] = chains     
+    return dic
 
 def get_opm(path_opm, pdb):
     link = "https://opm-assets.storage.googleapis.com/pdb/"
@@ -112,11 +135,11 @@ def reference_dict(a_pdb, b_pdb, d_ref):
 cutoff_rmsd = 3
 cutoff_lz = str(8)
 min_dist = str(10)
-option_generate = False
-option_nlz = False
-option_dist = False
+option_generate = True
+option_nlz = True
+option_dist = True
 option_super = False
-option_check = True
+option_check = False
 
 if __name__ == "__main__":
     create_dir(path_pdb)
@@ -173,21 +196,24 @@ if __name__ == "__main__":
                     ):  # Obtain all dimers NO FILTER!!
                         chain_a = cmd.get_chains(a)
                         chain_b = cmd.get_chains(b)
-                        if chain_a[0] == chain_b[0]:
-                            cmd.do(
-                                f'alter {b}, chain= "{d_change[chain_b[0]]}"'
-                            )  # A --> Q'
-                            cmd.save(
-                                f"{path_dimer_lz}{psefile}_{a}_{b}_{chain_a[0]}{d_change[chain_b[0]]}.pdb",
-                                f"{a} + {b}",
-                            )
-                            cmd.do(f'alter {b}, chain= "{chain_b[0]}"')
-                        else:
-                            cmd.save(
-                                f"{path_dimer_lz}{psefile}_{a}_{b}_{chain_a[0]}{chain_b[0]}.pdb",
-                                f"{a} + {b}",
-                            )
-                        sleep(1)
+                        try:#KeyError: 'AAA' 
+                            if chain_a[0] == chain_b[0]:
+                                cmd.do(
+                                    f'alter {b}, chain= "{d_change[chain_b[0]]}"'
+                                )  # A --> Q'
+                                cmd.save(
+                                    f"{path_dimer_lz}{psefile}_{a}_{b}_{chain_a[0]}{d_change[chain_b[0]]}.pdb",
+                                    f"{a} + {b}",
+                                )
+                                cmd.do(f'alter {b}, chain= "{chain_b[0]}"')
+                            else:
+                                cmd.save(
+                                    f"{path_dimer_lz}{psefile}_{a}_{b}_{chain_a[0]}{chain_b[0]}.pdb",
+                                    f"{a} + {b}",
+                                )
+                            sleep(1)
+                        except:
+                            continue
                     cmd.reinitialize()
                     sleep(1)
             j += 1
@@ -199,8 +225,8 @@ if __name__ == "__main__":
     lz_files = get_files(path_dimer_lz, ".pdb")
     dimer_files = get_files(path_dimer, ".pdb")
     # lz_files = ['4UG2_A_AA2AR_HUMAN_4UG2A_symB03-10000_AB', '4UG2_B_AA2AR_HUMAN_4UG2B_symA03000000_BA']
-    lz_info = get_coord_lz(path_misc)  # Get info about res related with fusion protein
     if option_nlz == True:
+        lz_info = get_coord_lz()  # Get info about res related with fusion protein
         j = 1
         for lz in lz_files:
             print(f"> {j *100 / len(lz_files)} %")
@@ -282,19 +308,17 @@ if __name__ == "__main__":
 
         ##GET DICCIONARY OF RESOLUTIONS OF EACH STRUCTURE (CODI PDB)
         try:
-            engine = sqlalchemy.create_engine(
-                f"mysql://lmcdbuser:{os.getenv('LMCDBUSER_PASS')}@alf03.uab.cat/lmcdb"
-            )
+            engine = create_engine(f'postgresql+psycopg2://{DB_USER}:{DB_PASSWORD}@localhost/{DB_NAME}')
             print(engine)
-            # engine = sqlalchemy.create_engine(f"mysql+mysqlconnector://adrian:D1m3rB0w!@localhost:3306/lmcdb")
+            # engine = create_engine(f"mysql+mysqlconnector://adrian:D1m3rB0w!@localhost:3306/lmcdb")
         except:
             print(colored("could not connect", "red"))
             sys.exit(0)
 
-        sql_query = """SELECT pdbid, resolution FROM pdb
-        WHERE resolution < 90 and (domain REGEXP '7tm.' or domain='Frizzled') and expmet='X-RAY DIFFRACTION';"""
+        sql_query = """SELECT pdb, resolution FROM gpcr_pdb
+        WHERE resolution < 90 and method='X-ray' and type ='receptor';"""
         data = pd.read_sql(sql_query, engine)
-        l_pdbid = list(data.pdbid)
+        l_pdbid = list(data.pdb)
         l_res = list(data.resolution)
         d_res = {}
         for i, pdb in enumerate(l_pdbid):

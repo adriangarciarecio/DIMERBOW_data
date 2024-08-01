@@ -14,16 +14,6 @@ import os
 import MDAnalysis as mda
 import sys
 
-path = os.path.dirname(os.path.abspath("__file__"))
-path_dimer = "/home/adrian/Documents/GitLab/web_dimers/static/PDB/dimers/"
-path_dimer_lz = "/home/adrian/Documents/GitLab/web_dimers/static/PDB/dimers_lz/"
-path_dimer_dis = f"/home/adrian/Documents/GitLab/web_dimers/static/PDB/dimers_sim/sim_{sys.argv[1]}/"
-if sys.argv[1] == 0:
-    path_dimer_dis = path_dimer
-if sys.argv[1] == -1:
-    path_dimer_dis = path_dimer_lz
-path_dimer_ref = "/home/adrian/Documents/GitLab/web_dimers/static/PDB/"
-path_results = "/home/adrian/Documents/GitLab/gpcr_dimers/RESULTS/"
 d_change = {"A": "Q", "B": "R", "C": "S", "D": "T", "E": "U", "F": "V"}
 
 ###############################################################################
@@ -196,6 +186,16 @@ def get_angle_pymol(path_pdb, prot_ref, prot, chain_ref, chains, vector_ref, ind
 # GET DISTRIBUTION INTERFACES
 ##############################################################################
 if __name__ == "__main__":
+    path = os.path.dirname(os.path.abspath("__file__"))
+    path_dimer = "/home/adrian/Documents/GitLab/web_dimers/static/PDB/dimers/"
+    path_dimer_lz = "/home/adrian/Documents/GitLab/web_dimers/static/PDB/dimers_lz/"
+    path_dimer_dis = f"/home/adrian/Documents/GitLab/web_dimers/static/PDB/dimers_sim/sim_{sys.argv[1]}/"
+    if sys.argv[1] == 0:
+        path_dimer_dis = path_dimer
+    if sys.argv[1] == -1:
+        path_dimer_dis = path_dimer_lz
+    path_dimer_ref = "/home/adrian/Documents/GitLab/web_dimers/static/PDB/"
+    path_results = "/home/adrian/Documents/GitLab/gpcr_dimers/RESULTS/"
     # REFERENCE PROTEIN
     print("> Start:" + str(datetime.now()))
     start_pymol()
